@@ -825,6 +825,7 @@ export default proto({
 	address: '00:00:00:00:00:00',
 	interfaces: {},
 	devices: [],
+	radios: [],
 	topologyChanged: false,
 	seen: timems(),
 
@@ -943,6 +944,22 @@ export default proto({
 
 	getDevices: function() {
 		return [ ...this.devices ];
+	},
+
+	addRadio: function(phyname) {
+		return wireless.addRadio(phyname);
+	},
+
+	lookupRadio: function(id) {
+		for (let radio in wireless.radios)
+			if (radio.phyname == radio || radio.index == id)
+				return radio;
+
+		return null;
+	},
+
+	getRadios: function () {
+		return [ ...wireless.radios ];
 	},
 
 	updateSelf: function(ifstatus) {
