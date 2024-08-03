@@ -50,14 +50,14 @@ function decode_tlv(msg, type, start, end) {
 
 		if (decode == null) {
 			log.warn(`CMDU ${msg.srcmac}#${msg.mid}: Unrecognized TLV type ${type} at offset ${start}`);
-			continue;
+			return null;
 		}
 
 		const data = decode(msg.buf.pos(start), end);
 
 		if (data == null) {
 			log.warn(`CMDU ${msg.srcmac}#${msg.mid}: Invalid payload in TLV type ${type} at offset ${start}`);
-			continue;
+			return null;
 		}
 
 		return { type, data };
@@ -68,14 +68,14 @@ function decode_tlv(msg, type, start, end) {
 
 		if (decode == null) {
 			log.warn(`CMDU ${msg.srcmac}#${msg.mid}: Unrecognized extended TLV type ${type}, subtype ${subtype} at offset ${start}`);
-			continue;
+			return null;
 		}
 
 		const data = decode(msg.buf, end);
 
 		if (data == null) {
 			log.warn(`CMDU ${msg.srcmac}#${msg.mid}: Invalid payload in extended TLV type ${type}, subtype ${subtype} at offset ${start}`);
-			continue;
+			return null;
 		}
 
 		return { type, subtype, data };
@@ -83,23 +83,19 @@ function decode_tlv(msg, type, start, end) {
 }
 
 function parse_tlvs(buf) {
-	const len = buf.length();
+	const end = buf.length();
 	const tlvs = [];
 
-	for (let rem = len - buf.pos(); rem >= 3; ) {
+	for (let off = buf.pos(); off + TLV_HEADER_LENGTH <= end; buf.pos(off = tlvs[-1])) {
 		const tlv_type = buf.get('B');
 		const tlv_len = buf.get('!H');
 
-		rem -= 3;
-
-		if (tlv_len > rem) {
-			log.warn(`Unexpected EOF while parsing CMDU TLV ${tlv_type} - want ${tlv_len} bytes, have ${rem}`);
+		if (off + TLV_HEADER_LENGTH + tlv_len > end) {
+			log.warn(`Unexpected EOF while parsing CMDU TLV ${tlv_type} - want ${tlv_len} bytes, have ${end - off + TLV_HEADER_LENGTH}`);
 			return null;
 		}
 
-		push(tlvs, tlv_type, len - rem, len - rem + tlv_len);
-
-		rem -= tlv_len;
+		push(tlvs, tlv_type, off + TLV_HEADER_LENGTH, off + TLV_HEADER_LENGTH + tlv_len);
 	}
 
 	return tlvs;
@@ -125,6 +121,7 @@ export default {
 		return proto({
 			type,
 			mid: mid ?? (++this.mid_counter % 65536),
+			buf: buffer(),
 			tlvs: []
 		}, this);
 	},
@@ -153,7 +150,7 @@ export default {
 
 		// shortcut: non-fragmented packet
 		if (fid == 0 && (flags & CMDU_F_LASTFRAG)) {
-			let tlvs = parse_tlvs(buf);
+			let tlvs = parse_tlvs(buf.pos(IEEE1905_HEADER_LENGTH));
 
 			if (tlvs == null) {
 				log.warn(`CMDU ${srcmac}#${mid}: Invalid message payload`);
@@ -210,15 +207,17 @@ export default {
 		// reassemble fragments
 		if (msg.flags & CMDU_F_LASTFRAG) {
 			// return on yet missing fragments (fragments were received out of order)
-			for (fid = 0; fid < length(msg.fragments); fid++) {
+			for (let i = 0; i < length(msg.fragments); i++) {
 				if (msg.fragments[fid] == null) {
-					log.debug(`CMDU ${srcmac}#${mid}: Fragments received out of order, fragment ${fid+1} of ${length(msg.fragments)} missing`);
+					log.debug(`CMDU ${srcmac}#${mid}: Fragments received out of order, fragment ${i+1} of ${length(msg.fragments)} missing`);
 					return msg;
 				}
 			}
 
 			// all fragments present, reassemble message
-			for (msg.buf = shift(msg.fragments); msg.fragments[0] != null; )
+			msg.buf = shift(msg.fragments);
+
+			while (msg.fragments[0] != null)
 				msg.buf.end().put('*', shift(msg.fragments).slice(IEEE1905_HEADER_LENGTH));
 
 			msg.buf.pos(IEEE1905_HEADER_LENGTH);
@@ -275,15 +274,15 @@ export default {
 		if (type !== defs.TLV_EXTENDED) {
 			const encode = codec.encoder[type];
 
-			if (encode != null && encode(buf.pos(offset + TLV_HEADER_LENGTH), ...args)) {
+			if (encode != null && encode(this.buf.pos(offset + TLV_HEADER_LENGTH), ...args)) {
 				// encoding successfull, write TLV header
-				const tlv_len = buf.pos() - offset - TLV_HEADER_LENGTH;
-				buf.pos(offset).put('!BH', type, tlv_len);
+				const tlv_len = this.buf.pos() - offset - TLV_HEADER_LENGTH;
+				this.buf.pos(offset).put('!BH', type, tlv_len);
 				push(this.tlvs, type, offset, offset + TLV_HEADER_LENGTH + tlv_len);
 			}
 			else {
 				// encoding failure, reset buffer length
-				buf.length(offset);
+				this.buf.length(offset);
 				success = false;
 			}
 		}
@@ -291,15 +290,15 @@ export default {
 			const subtype = shift(args);
 			const encode = codec.extended_encoder[subtype];
 
-			if (encode != null && encode(buf.pos(offset + TLV_EXTENDED_HEADER_LENGTH), ...args)) {
+			if (encode != null && encode(this.buf.pos(offset + TLV_EXTENDED_HEADER_LENGTH), ...args)) {
 				// encoding successfull, write extended TLV header
-				const tlv_len = buf.pos() - offset - TLV_HEADER_LENGTH;
-				buf.pos(offset).put('!BHH', defs.TLV_EXTENDED, tlv_len, subtype);
+				const tlv_len = this.buf.pos() - offset - TLV_HEADER_LENGTH;
+				this.buf.pos(offset).put('!BHH', defs.TLV_EXTENDED, tlv_len, subtype);
 				push(this.tlvs, defs.TLV_EXTENDED, offset, offset + TLV_HEADER_LENGTH + tlv_len);
 			}
 			else {
 				// encoding failure, reset buffer length
-				buf.length(offset);
+				this.buf.length(offset);
 				success = false;
 			}
 		}
@@ -323,7 +322,7 @@ export default {
 			offset = this.tlvs[-1] ?? IEEE1905_HEADER_LENGTH;
 		}
 
-		buf.pos(offset).put('!BH*', type, length(payload), payload);
+		this.buf.pos(offset).put('!BH*', type, length(payload), payload);
 		push(this.tlvs, type, offset, offset + TLV_HEADER_LENGTH + length(payload));
 
 		if (append_eom)
@@ -333,33 +332,49 @@ export default {
 	get_tlv: function(type) {
 		for (let i = 0; this.tlvs[i] !== null; i += 3)
 			if (this.tlvs[i] === type)
-				return decode_tlv(this, this.tlvs[i], this.tlvs[i+1], this.tlvs[i+2]);
+				return decode_tlv(this, this.tlvs[i], this.tlvs[i+1], this.tlvs[i+2])?.data;
 	},
 
 	get_tlv_raw: function(type) {
 		for (let i = 0; this.tlvs[i] !== null; i += 3)
 			if (this.tlvs[i] === type)
-				return this.buf.slice(this.tlvs[i+1] + TLV_HEADER_LENGTH, this.tlvs[i+2]);
+				return this.buf.slice(this.tlvs[i+1], this.tlvs[i+2]);
 	},
 
-	get_tlvs: function(type) {
-		let rv = [];
+	get_tlvs: function(...types) {
+		const rv = [];
 
 		for (let i = 0; this.tlvs[i] !== null; i += 3) {
-			if (type == null || this.tlvs[i] === type) {
+			if (!length(types) || this.tlvs[i] in types) {
 				const tlv = decode_tlv(this, this.tlvs[i], this.tlvs[i+1], this.tlvs[i+2]);
-				if (tlv != null) push(rv, tlv);
+				if (tlv != null)
+					push(rv, tlv);
 			}
 		}
 
 		return rv;
 	},
 
-	has_tlv: function(type) {
+	get_tlvs_raw: function(...types) {
+		const rv = [];
+
+		for (let i = 0; this.tlvs[i] !== null; i += 3) {
+			if (!length(types) || this.tlvs[i] in types) {
+				push(rv, {
+					type: this.tlvs[i],
+					payload: this.buf.slice(this.tlvs[i+1], this.tlvs[i+2])
+				});
+			}
+		}
+
+		return rv;
+	},
+
+	has_tlv: function(...types) {
 		let count = 0;
 
 		for (let i = 0; this.tlvs[i] !== null; i += 3)
-			if (this.tlvs[i] === type)
+			if (this.tlvs[i] in types)
 				count++;
 
 		return count;
@@ -375,7 +390,7 @@ export default {
 			socket.ifname,
 			src, dest,
 			this.type,
-			defs.cmdu_name(this.type) ?? 'Unknown Type',
+			cmdu_name(this.type) ?? 'Unknown Type',
 			this.mid);
 
 		this.ensure_eom();

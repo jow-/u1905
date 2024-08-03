@@ -18,6 +18,12 @@ export default {
 	MSG_AP_AUTOCONFIGURATION_RENEW: 0x000a,
 	MSG_IEEE1905_PUSH_BUTTON_EVENT_NOTIFICATION: 0x000b,
 	MSG_IEEE1905_PUSH_BUTTON_JOIN_NOTIFICATION: 0x000c,
+	MSG_HIGHER_LAYER_QUERY: 0x000d,
+	MSG_HIGHER_LAYER_RESPONSE: 0x000e,
+	MSG_INTERFACE_POWER_CHANGE_REQUEST: 0x000f,
+	MSG_INTERFACE_POWER_CHANGE_RESPONSE: 0x0010,
+	MSG_GENERIC_PHY_QUERY: 0x0011,
+	MSG_GENERIC_PHY_RESPONSE: 0x0012,
 	MSG_IEEE1905_ACK: 0x8000,
 	MSG_AP_CAPABILITY_QUERY: 0x8001,
 	MSG_AP_CAPABILITY_REPORT: 0x8002,
@@ -310,6 +316,12 @@ export default {
 		[3]: 'SLAAC',
 	},
 
+	LINK_METRICS_REQUESTED: {
+		[0x00]: 'Tx link metrics only',
+		[0x01]: 'Rx link metrics only',
+		[0x02]: 'Both Tx and Rx link metrics',
+	},
+
 	LINK_METRIC_RESULT_CODE: {
 		[0x00]: 'Invalid neighbor',
 	},
@@ -377,6 +389,11 @@ export default {
 		[0x0B]: 'Unable to configure requested QoS Management Policy',
 		[0x0C]: 'QoS Management DSCP Policy Request rejected',
 		[0x0D]: 'Agent can not onboard other Agents via DPP over Wi-Fi',
+	},
+
+	QUERY_TYPE: {
+		[0x00]: 'All neighbors',
+		[0x01]: 'Specific neighbor',
 	},
 
 	REASON_CODE: {
